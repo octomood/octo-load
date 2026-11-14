@@ -1,0 +1,16 @@
+[Unit]
+Description=OctoLoad Telegram bot (user service)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/octo-load
+EnvironmentFile=%h/octo-load/.env
+ExecStart=%h/octo-load/.venv/bin/python -m app
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+
+[Install]
+WantedBy=default.target

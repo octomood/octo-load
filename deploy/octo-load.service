@@ -1,0 +1,23 @@
+[Unit]
+Description=OctoLoad Telegram bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=octo
+Group=octo
+WorkingDirectory=/opt/octo-load
+EnvironmentFile=/etc/octo-load.env
+ExecStart=/opt/octo-load/.venv/bin/python -m app
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/octo-load
+
+[Install]
+WantedBy=multi-user.target

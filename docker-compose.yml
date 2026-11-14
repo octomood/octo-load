@@ -1,0 +1,15 @@
+services:
+  octo-load:
+    build: .
+    image: octo-load:latest
+    container_name: octo-load
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      WORK_DIR: /data
+    volumes:
+      - ./data:/data
+      - ./secrets:/secrets:ro
+    # No inbound ports are required: the bot talks to Telegram over outbound HTTPS.
+    # The built-in health endpoint listens on $PORT inside the container.
