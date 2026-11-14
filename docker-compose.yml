@@ -9,7 +9,10 @@ services:
     environment:
       WORK_DIR: /data
     volumes:
-      - ./data:/data
+      - octo-data:/data
       - ./secrets:/secrets:ro
     # No inbound ports are required: the bot talks to Telegram over outbound HTTPS.
     # The built-in health endpoint listens on $PORT inside the container.
+
+volumes:
+  octo-data:

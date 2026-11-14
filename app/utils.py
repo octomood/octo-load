@@ -5,10 +5,12 @@ import html
 import ipaddress
 import re
 import socket
-from urllib.parse import urlparse
+from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 _URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
 _TRAILING = ".,;:!?»…\"'"
+IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff"}
 
 
 def extract_url(text: str) -> str | None:
@@ -24,7 +26,11 @@ def extract_url(text: str) -> str | None:
     return url
 
 
-def human_size(num: float | int | None) -> str:
+def is_image_url(url: str) -> bool:
+    return Path(unquote(urlparse(url).path)).suffix.lower() in IMAGE_SUFFIXES
+
+
+def human_size(num: float | None) -> str:
     if not num or num < 0:
         return "0 Б"
     units = ("Б", "КБ", "МБ", "ГБ", "ТБ")
@@ -38,7 +44,7 @@ def human_size(num: float | int | None) -> str:
     return f"{value:.1f} ТБ"
 
 
-def human_duration(seconds: float | int | None) -> str:
+def human_duration(seconds: float | None) -> str:
     if not seconds or seconds < 0:
         return "—"
     seconds = int(seconds)
@@ -57,7 +63,7 @@ def human_speed(bps: float | None) -> str:
 
 def progress_bar(percent: float, width: int = 10) -> str:
     percent = max(0.0, min(100.0, percent))
-    filled = int(round(percent / 100 * width))
+    filled = round(percent / 100 * width)
     return "▰" * filled + "▱" * (width - filled)
 
 

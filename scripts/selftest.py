@@ -14,8 +14,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.config import Settings  # noqa: E402
-from app.downloader import Downloader, UserError  # noqa: E402
+from app.config import Settings
+from app.downloader import Downloader, UserError
 
 
 async def main(url: str, kind: str) -> int:

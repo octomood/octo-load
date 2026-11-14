@@ -11,7 +11,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.telegram import TelegramAPIServer
 from aiogram.enums import ParseMode
-from aiogram.exceptions import TelegramConflictError
+from aiogram.exceptions import TelegramConflictError, TelegramUnauthorizedError
 from aiogram.types import BotCommand, ErrorEvent, LinkPreviewOptions
 
 from .config import Settings, load_settings
@@ -120,8 +120,8 @@ async def run(settings: Settings) -> None:
                     "😵 Упс, что-то пошло не так. Попробуй ещё раз.",
                     link_preview_options=LinkPreviewOptions(is_disabled=True),
                 )
-            except Exception:  # noqa: BLE001 - best effort only
-                pass
+            except Exception as exc:  # noqa: BLE001 - best effort only
+                log.debug("could not notify user about error: %s", exc)
         return True
 
     try:
@@ -136,6 +136,12 @@ async def run(settings: Settings) -> None:
             "Stop it (or the duplicate deployment) and start again."
         )
         raise SystemExit(2) from None
+    except TelegramUnauthorizedError:
+        log.error(
+            "Telegram rejected BOT_TOKEN. Check the token in .env / the environment "
+            "(and revoke it in @BotFather if it leaked)."
+        )
+        raise SystemExit(3) from None
     finally:
         cleanup_task.cancel()
         if health is not None:

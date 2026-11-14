@@ -6,6 +6,7 @@ import shutil
 import tempfile
 import time
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 from aiogram import Bot, F, Router
 from aiogram.enums import ChatAction
@@ -24,13 +25,14 @@ from aiogram.types import (
 from . import texts
 from .config import Settings
 from .downloader import DownloadCancelled, Downloader, MediaInfo, TooLarge, UserError
-from .jobs import Job, JobStore, RateLimiter, Stats, UserGate
+from .jobs import Job, JobStore, RateLimiter, Stats, UserGate, photos_supported
 from .utils import (
     escape,
     extract_url,
     human_duration,
     human_size,
     human_speed,
+    is_image_url,
     progress_bar,
     shorten,
     url_rejection_reason,
@@ -65,6 +67,14 @@ def cancel_keyboard(job_id: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="✖️ Отмена", callback_data=f"octo:x:{job_id}")]
+        ]
+    )
+
+
+def photo_keyboard(job: Job) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🖼 Фото", callback_data=f"octo:p:{job.id}")]
         ]
     )
 
@@ -112,21 +122,20 @@ class ProgressView:
         self.last_time = time.monotonic()
         self.last_bytes = 0
         self.speed = 0.0
-        self.finished = False
 
     async def __call__(self, done: int, total: int | None) -> None:
         now = time.monotonic()
         complete = bool(total) and done >= total
         if not complete and now - self.last_edit < 2.2:
             return
-        if self.finished:
-            return
-        self.finished = complete
 
         delta_t = now - self.last_time
         if delta_t > 0.15 and done >= self.last_bytes:
             instant = (done - self.last_bytes) / delta_t
             self.speed = instant if not self.speed else self.speed * 0.6 + instant * 0.4
+        # A merged video downloads the video stream first, then the audio one.
+        if self.last_bytes and done + 1_000_000 < self.last_bytes:
+            self.header = "🎵 Добавляю звук…"
         self.last_time, self.last_bytes = now, done
         self.last_edit = now
 
@@ -188,7 +197,7 @@ async def _send_result(
             FSInputFile(path) if isinstance(path, Path) else FSInputFile(path[0]),
             caption=_caption(info),
             supports_streaming=True,
-            duration=info.duration or 0,
+            duration=info.duration,
         )
     elif kind == "audio":
         await bot.send_chat_action(chat_id, ChatAction.UPLOAD_VOICE)
@@ -198,7 +207,7 @@ async def _send_result(
             caption=_caption(info),
             title=shorten(info.title, 64),
             performer=shorten(info.uploader or "", 64) or None,
-            duration=info.duration or 0,
+            duration=info.duration,
         )
     else:
         photos = [path] if isinstance(path, Path) else list(path)
@@ -229,6 +238,9 @@ async def _download_and_send(
     gate: UserGate,
     stats: Stats,
 ) -> None:
+    if gate.busy_global:
+        await safe_edit(status, texts.QUEUE)
+
     if not await gate.acquire(job.user_id):
         await safe_edit(status, texts.busy())
         return
@@ -306,6 +318,69 @@ async def _download_and_send(
         shutil.rmtree(dest, ignore_errors=True)
 
 
+async def _handle_direct_image(
+    *,
+    message: Message,
+    url: str,
+    settings: Settings,
+    downloader: Downloader,
+    jobs: JobStore,
+    stats: Stats,
+    gate: UserGate,
+) -> None:
+    user = message.from_user
+    if user is None:
+        return
+
+    status = await message.answer("🖼 Скачиваю фото…")
+    if not await gate.acquire(user.id):
+        await safe_edit(status, texts.busy())
+        return
+
+    dest = Path(tempfile.mkdtemp(dir=settings.work_dir, prefix="job-"))
+    title = unquote(Path(urlparse(url).path).name) or "Фото"
+    info = MediaInfo(
+        url=url,
+        title=title,
+        uploader=None,
+        duration=None,
+        thumbnail=None,
+        extractor="Direct",
+    )
+    job = jobs.add(user.id, url, info)
+
+    try:
+        path = await downloader.download_direct_image(
+            url, dest, max_bytes=settings.safe_limit_bytes
+        )
+        await safe_edit(status, texts.UPLOADING)
+        await _send_result(message.bot, message.chat.id, path, "photos", job)
+        stats.downloads += 1
+        try:
+            await status.delete()
+        except TelegramBadRequest:
+            pass
+    except TooLarge as exc:
+        stats.failures += 1
+        await safe_edit(
+            status,
+            texts.TOO_BIG.format(
+                size=human_size(exc.size),
+                limit=settings.upload_limit_mb,
+            ),
+        )
+    except UserError as exc:
+        stats.failures += 1
+        await safe_edit(status, texts.error(str(exc)))
+    except Exception:
+        stats.failures += 1
+        log.exception("direct image failed for %s", url)
+        await safe_edit(status, texts.error("Не смог скачать картинку."))
+    finally:
+        gate.release(user.id)
+        shutil.rmtree(dest, ignore_errors=True)
+
+
 async def _handle_link(
     message: Message,
     *,
@@ -333,11 +408,54 @@ async def _handle_link(
         await message.reply(texts.error(reason))
         return
 
+    if is_image_url(url):
+        await _handle_direct_image(
+            message=message,
+            url=url,
+            settings=settings,
+            downloader=downloader,
+            jobs=jobs,
+            stats=stats,
+            gate=gate,
+        )
+        return
+
     status = await message.answer(texts.PROBING)
     try:
         await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
         info = await downloader.probe(url)
     except UserError as exc:
+        # Image boards and profile pages often have no video metadata, but
+        # gallery-dl can still fetch the pictures.
+        if photos_supported(url):
+            info = MediaInfo(
+                url=url,
+                title="Фото по ссылке",
+                uploader=None,
+                duration=None,
+                thumbnail=None,
+                extractor="Gallery",
+            )
+            job = jobs.add(user.id, url, info)
+            if kind == "photos":
+                await _download_and_send(
+                    bot=message.bot,
+                    chat_id=message.chat.id,
+                    job=job,
+                    kind="photos",
+                    status=status,
+                    settings=settings,
+                    downloader=downloader,
+                    gate=gate,
+                    stats=stats,
+                )
+            else:
+                await safe_edit(
+                    status,
+                    texts.gallery_card(urlparse(url).hostname or "", settings.max_photos),
+                    photo_keyboard(job),
+                )
+            return
         await safe_edit(status, texts.error(str(exc)))
         return
     except Exception:
@@ -420,7 +538,7 @@ async def cmd_direct(
     )
 
 
-@router.message(F.text.regexp(r"https?://") & ~F.text.startswith("/"))
+@router.message(F.text.regexp(r"https?://", mode="search") & ~F.text.startswith("/"))
 async def on_link(
     message: Message,
     settings: Settings,

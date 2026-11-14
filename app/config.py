@@ -5,6 +5,8 @@ import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 DEFAULT_UPLOAD_LIMIT_MB = 50  # cloud Bot API hard limit
 
 
@@ -66,6 +68,9 @@ class Settings:
 
 
 def load_settings() -> Settings:
+    # .env is convenient locally and harmless in containers (env vars win).
+    load_dotenv(override=False)
+
     token = os.getenv("BOT_TOKEN", "").strip()
     if not token:
         raise SystemExit(
@@ -87,8 +92,7 @@ def load_settings() -> Settings:
     limit = _int("UPLOAD_LIMIT_MB", DEFAULT_UPLOAD_LIMIT_MB)
     if limit < 1:
         raise SystemExit("UPLOAD_LIMIT_MB must be positive")
-    if limit > 2000:
-        limit = 2000
+    limit = min(limit, 2000)
 
     return Settings(
         bot_token=token,

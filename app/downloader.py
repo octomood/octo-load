@@ -2,19 +2,48 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import shutil
 import sys
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Awaitable, Callable
+from urllib.parse import unquote, urlparse
 
+import aiohttp
 from PIL import Image, ImageOps
 
 from .config import Settings
 
+log = logging.getLogger(__name__)
+
 ProgressCallback = Callable[[int, int | None], Awaitable[None]]
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".tif", ".tiff"}
+
+# Sites where gallery-dl has two directory levels (post -> images). Without an
+# explicit two-level range it would download every image of every post.
+TWO_LEVEL_HOSTS = (
+    "pinterest.com",
+    "pin.it",
+    "instagram.com",
+    "tiktok.com",
+    "twitter.com",
+    "x.com",
+    "reddit.com",
+    "tumblr.com",
+    "flickr.com",
+    "vk.com",
+    "threads.net",
+    "bsky.app",
+)
+
+
+def _range_arg(url: str, limit: int) -> str:
+    host = (urlparse(url).hostname or "").lower()
+    if any(host == item or host.endswith("." + item) for item in TWO_LEVEL_HOSTS):
+        return f"1-1,1-{limit}"
+    return f"1-{limit}"
 
 
 class UserError(Exception):
@@ -47,13 +76,22 @@ class MediaInfo:
         return name[:1].upper() + name[1:] if name else "Ссылка"
 
 
-def _module_cmd(binary: str, module: str) -> list[str]:
-    if Path(binary).exists():
+def _module_cmd(binary: str, module: str, default_binary: str) -> list[str]:
+    # Prefer the module from the current interpreter: that is the copy we
+    # install and update in the venv, even when the venv is not activated.
+    if binary != default_binary and Path(binary).exists():
         return [binary]
+    try:
+        import importlib.util
+
+        if importlib.util.find_spec(module) is not None:
+            return [sys.executable, "-m", module]
+    except (ImportError, ValueError):
+        pass
     found = shutil.which(binary)
     if found:
         return [found]
-    return [sys.executable, "-m", module]
+    return [binary]
 
 
 class Downloader:
@@ -61,8 +99,8 @@ class Downloader:
         self.settings = settings
         self._active: dict[str, asyncio.subprocess.Process] = {}
         self._cancelled: set[str] = set()
-        self._ytdlp = _module_cmd(settings.ytdlp, "yt_dlp")
-        self._gallerydl = _module_cmd(settings.gallerydl, "gallery_dl")
+        self._ytdlp = _module_cmd(settings.ytdlp, "yt_dlp", "yt-dlp")
+        self._gallerydl = _module_cmd(settings.gallerydl, "gallery_dl", "gallery-dl")
 
     # ---------------------------------------------------------------- helpers
 
@@ -240,7 +278,8 @@ class Downloader:
         cap = max(1_000_000, self.settings.safe_limit_bytes)
         cap_mb = cap // (1024 * 1024)
         selector = (
-            f"bv*[filesize<{cap_mb}M][ext=mp4]+ba[filesize<{cap_mb}M][ext=m4a]"
+            f"bv*[filesize<{cap_mb}M][ext=mp4][vcodec^=avc1]+ba[filesize<{cap_mb}M][ext=m4a]"
+            f"/bv*[filesize<{cap_mb}M][ext=mp4]+ba[filesize<{cap_mb}M][ext=m4a]"
             f"/b[filesize<{cap_mb}M][ext=mp4]"
             f"/bv*[filesize<{cap_mb}M]+ba[filesize<{cap_mb}M]"
             f"/b[filesize<{cap_mb}M]/bv*+ba/b"
@@ -250,7 +289,7 @@ class Downloader:
             "--progress-delta",
             "1",
             "--progress-template",
-            "dl:%(progress.downloaded_bytes)s/%(progress.total_bytes_estimate)s",
+            "dl:%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s",
             "-f",
             selector,
             "--merge-output-format",
@@ -290,7 +329,7 @@ class Downloader:
             "--progress-delta",
             "1",
             "--progress-template",
-            "dl:%(progress.downloaded_bytes)s/%(progress.total_bytes_estimate)s",
+            "dl:%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s",
             "-x",
             "--audio-format",
             "mp3",
@@ -314,6 +353,50 @@ class Downloader:
             raise TooLarge(path.stat().st_size)
         return path
 
+    async def download_direct_image(
+        self,
+        url: str,
+        dest: Path,
+        *,
+        max_bytes: int,
+    ) -> Path:
+        """Fetch a plain image URL (imgur/unsplash/… .jpg|.png|.webp)."""
+        suffix = Path(unquote(urlparse(url).path)).suffix.lower()
+        if suffix not in IMAGE_SUFFIXES:
+            suffix = ".jpg"
+
+        timeout = aiohttp.ClientTimeout(total=90, connect=20)
+        headers = {"User-Agent": "OctoLoad/1.0 (Telegram media bot)"}
+        try:
+            async with (
+                aiohttp.ClientSession(timeout=timeout) as session,
+                session.get(url, headers=headers) as response,
+            ):
+                if response.status >= 400:
+                    raise UserError(f"Сайт ответил кодом {response.status}.")
+                content_type = response.headers.get("Content-Type", "")
+                if content_type and not content_type.startswith("image/"):
+                    raise UserError("По ссылке не картинка.")
+                length = response.content_length
+                if length and length > max_bytes:
+                    raise TooLarge(length)
+                buffer = bytearray()
+                async for chunk in response.content.iter_chunked(64 * 1024):
+                    buffer.extend(chunk)
+                    if len(buffer) > max_bytes:
+                        raise TooLarge(len(buffer))
+        except aiohttp.ClientError as exc:
+            raise UserError("Не удалось скачать картинку — сайт не отвечает.") from exc
+        except TimeoutError as exc:
+            raise UserError("Сайт слишком долго отдаёт картинку.") from exc
+
+        if not buffer:
+            raise UserError("Сайт вернул пустой файл.")
+
+        path = dest / f"photo{suffix}"
+        path.write_bytes(buffer)
+        return await asyncio.to_thread(_normalize_photo, path)
+
     async def download_photos(
         self,
         url: str,
@@ -329,7 +412,7 @@ class Downloader:
             "-D",
             str(dest),
             "--range",
-            f"1-{max(1, limit)}",
+            _range_arg(url, limit),
             "-R",
             "3",
         ]
@@ -358,7 +441,8 @@ class Downloader:
         for path in raw[:limit]:
             try:
                 prepared.append(await asyncio.to_thread(_normalize_photo, path))
-            except Exception:  # noqa: BLE001 - corrupt/unsupported image, just skip it
+            except Exception as exc:  # noqa: BLE001 - corrupt/unsupported image, skip it
+                log.debug("skip photo %s: %s", path, exc)
                 continue
         if not prepared:
             raise UserError("Не удалось подготовить фото к отправке.")
@@ -431,15 +515,26 @@ class _ProgressParser:
     def feed(self, line: str) -> None:
         if not line.startswith("dl:"):
             return
-        raw_done, _, raw_total = line[3:].partition("/")
-        try:
-            self.done = int(float(raw_done))
-        except ValueError:
+        parts = line[3:].split("|")
+        if len(parts) < 2:
             return
         try:
-            self.total = int(float(raw_total)) if raw_total not in {"", "NA", "None"} else None
+            self.done = int(float(parts[0]))
         except ValueError:
-            self.total = None
+            return
+
+        self.total = None
+        for raw_total in parts[1:]:
+            if raw_total in {"", "NA", "None"}:
+                continue
+            try:
+                total = int(float(raw_total))
+            except ValueError:
+                continue
+            if total > 0:
+                self.total = total
+                break
+
         if self._task is None or self._task.done():
             self._task = asyncio.create_task(self.callback(self.done, self.total))
 

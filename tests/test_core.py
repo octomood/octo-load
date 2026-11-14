@@ -14,6 +14,7 @@ from app.utils import (
     extract_url,
     human_duration,
     human_size,
+    is_image_url,
     progress_bar,
     shorten,
     url_rejection_reason,
@@ -38,6 +39,11 @@ class UrlTests(unittest.TestCase):
 
     def test_extract_none(self) -> None:
         self.assertIsNone(extract_url("просто текст"))
+
+    def test_image_url(self) -> None:
+        self.assertTrue(is_image_url("https://x.com/a.JPG?size=1"))
+        self.assertTrue(is_image_url("https://x.com/%D1%84%D0%BE%D1%82%D0%BE.png"))
+        self.assertFalse(is_image_url("https://x.com/video/123"))
 
     def test_reject_localhost(self) -> None:
         reason = asyncio.run(url_rejection_reason("http://localhost:8080/x"))

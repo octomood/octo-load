@@ -62,6 +62,14 @@ def card(info: MediaInfo) -> str:
     return "\n".join(parts) + CARD_FOOTER
 
 
+def gallery_card(host: str, limit: int) -> str:
+    return (
+        "🖼 <b>Похоже, это галерея</b>\n"
+        f"{escape(host or 'ссылка')}\n\n"
+        f"Достану до {limit} фото — нажми кнопку 👇"
+    )
+
+
 def error(text: str) -> str:
     return f"😕 {text}"
 
