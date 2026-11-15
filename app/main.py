@@ -47,6 +47,7 @@ async def _health_server(port: int, settings: Settings) -> object:
             return web.Response(status=404)
         url = request.query.get("url", "")
         client = request.query.get("client", "")
+        formats = request.query.get("formats", "")
         allowed = (
             "youtube.com", "youtu.be", "soundcloud.com", "tiktok.com",
             "pinterest.", "instagram.com", "x.com", "twitter.com",
@@ -57,8 +58,13 @@ async def _health_server(port: int, settings: Settings) -> object:
             sys.executable, "-m", "yt_dlp", "--ignore-config", "--no-warnings",
             "--no-playlist", "-J", "--socket-timeout", "20", url,
         ]
+        extractor = []
         if client:
-            args += ["--extractor-args", f"youtube:player_client={client}"]
+            extractor.append(f"player_client={client}")
+        if formats in {"missing_pot", "duplicate", "incomplete"}:
+            extractor.append(f"formats={formats}")
+        if extractor:
+            args += ["--extractor-args", "youtube:" + ";".join(extractor)]
         try:
             process = await asyncio.create_subprocess_exec(
                 *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
@@ -76,7 +82,7 @@ async def _health_server(port: int, settings: Settings) -> object:
             except Exception:  # noqa: BLE001
                 title = ""
         return web.json_response(
-            {"code": code, "title": title, "tail": "\n".join(text.splitlines()[-12:])}
+            {"code": code, "title": title, "tail": "\n".join(text.splitlines()[-30:])}
         )
 
     app = web.Application()
