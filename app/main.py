@@ -47,8 +47,12 @@ async def _health_server(port: int, settings: Settings) -> object:
             return web.Response(status=404)
         url = request.query.get("url", "")
         client = request.query.get("client", "")
-        if not url.startswith(("https://www.youtube.com/", "https://youtu.be/", "https://m.youtube.com/")):
-            return web.json_response({"error": "only youtube urls"}, status=400)
+        allowed = (
+            "youtube.com", "youtu.be", "soundcloud.com", "tiktok.com",
+            "pinterest.", "instagram.com", "x.com", "twitter.com",
+        )
+        if not url.startswith("https://") or not any(host in url for host in allowed):
+            return web.json_response({"error": "unsupported host"}, status=400)
         args = [
             sys.executable, "-m", "yt_dlp", "--ignore-config", "--no-warnings",
             "--no-playlist", "-J", "--socket-timeout", "20", url,
