@@ -1,0 +1,9 @@
+[Unit]
+Description=Update yt-dlp and gallery-dl for OctoLoad
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/octo-load
+ExecStart=%h/octo-load/scripts/update-local.sh

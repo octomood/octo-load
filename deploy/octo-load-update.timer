@@ -1,0 +1,10 @@
+[Unit]
+Description=Weekly OctoLoad extractor update
+
+[Timer]
+OnCalendar=Mon 04:15
+Persistent=true
+RandomizedDelaySec=30m
+
+[Install]
+WantedBy=timers.target

@@ -26,9 +26,12 @@ fi
 UNIT_DIR="$HOME/.config/systemd/user"
 mkdir -p "$UNIT_DIR"
 sed "s#%h/octo-load#$DIR#g" deploy/octo-load-user.service > "$UNIT_DIR/octo-load.service"
+sed "s#%h/octo-load#$DIR#g" deploy/octo-load-update.service > "$UNIT_DIR/octo-load-update.service"
+install -m 0644 deploy/octo-load-update.timer "$UNIT_DIR/octo-load-update.timer"
 
 systemctl --user daemon-reload
 systemctl --user enable --now octo-load
+systemctl --user enable --now octo-load-update.timer
 
 if command -v loginctl >/dev/null; then
     loginctl enable-linger "$USER" 2>/dev/null || true

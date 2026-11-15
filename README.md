@@ -28,6 +28,12 @@ python3 -m venv .venv
 .venv/bin/python -m app
 ```
 
+Для автозапуска вместе с компьютером (Linux, systemd):
+
+```bash
+bash scripts/install-local.sh
+```
+
 Нужен `ffmpeg` в `PATH` (для склейки видео и конвертации в MP3):
 
 ```bash
