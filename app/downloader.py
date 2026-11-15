@@ -277,12 +277,14 @@ class Downloader:
     ) -> Path:
         cap = max(1_000_000, self.settings.safe_limit_bytes)
         cap_mb = cap // (1024 * 1024)
+        height = self.settings.max_height
         selector = (
-            f"bv*[filesize<{cap_mb}M][ext=mp4][vcodec^=avc1]+ba[filesize<{cap_mb}M][ext=m4a]"
-            f"/bv*[filesize<{cap_mb}M][ext=mp4]+ba[filesize<{cap_mb}M][ext=m4a]"
-            f"/b[filesize<{cap_mb}M][ext=mp4]"
-            f"/bv*[filesize<{cap_mb}M]+ba[filesize<{cap_mb}M]"
-            f"/b[filesize<{cap_mb}M]/bv*+ba/b"
+            f"bv*[height<={height}][filesize<{cap_mb}M][ext=mp4][vcodec^=avc1]+ba[filesize<{cap_mb}M][ext=m4a]"
+            f"/bv*[height<={height}][filesize<{cap_mb}M][ext=mp4]+ba[filesize<{cap_mb}M][ext=m4a]"
+            f"/b[height<={height}][filesize<{cap_mb}M][ext=mp4]"
+            f"/bv*[height<={height}][filesize<{cap_mb}M]+ba[filesize<{cap_mb}M]"
+            f"/b[height<={height}][filesize<{cap_mb}M]"
+            f"/bv*[height<={height}]+ba/b[height<={height}]/bv*+ba/b"
         )
         args = self._base_args() + [
             "--newline",

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import shutil
 import sys
 import time
@@ -81,6 +82,10 @@ async def run(settings: Settings) -> None:
     if settings.port:
         health = await _health_server(settings.port)
 
+    public_url = settings.self_url or os.getenv("RENDER_EXTERNAL_URL", "").strip() or None
+    keepalive_task = (
+        asyncio.create_task(_keepalive_loop(public_url)) if public_url else None
+    )
     cleanup_task = asyncio.create_task(_cleanup_loop(jobs))
 
     @dp.startup()
@@ -144,10 +149,33 @@ async def run(settings: Settings) -> None:
         raise SystemExit(3) from None
     finally:
         cleanup_task.cancel()
+        if keepalive_task is not None:
+            keepalive_task.cancel()
         if health is not None:
             await health.cleanup()  # type: ignore[attr-defined]
         await bot.session.close()
         log.info("stopped")
+
+
+async def _keepalive_loop(base_url: str) -> None:
+    """Ping our own public health endpoint so free PaaS instances stay awake."""
+    import aiohttp
+
+    target = base_url.rstrip("/") + "/healthz"
+    log.info("self-ping enabled: %s every 10 min", target)
+    while True:
+        await asyncio.sleep(600)
+        try:
+            async with (
+                aiohttp.ClientSession(
+                    timeout=aiohttp.ClientTimeout(total=20)
+                ) as session,
+                session.get(target) as response,
+            ):
+                await response.read()
+                log.debug("self-ping: HTTP %s", response.status)
+        except Exception as exc:  # noqa: BLE001 - keep-alive must never crash
+            log.debug("self-ping failed: %s", exc)
 
 
 async def _cleanup_loop(jobs: JobStore) -> None:

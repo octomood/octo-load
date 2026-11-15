@@ -44,10 +44,12 @@ class Settings:
     per_user_concurrent: int = 1
     rate_limit_per_hour: int = 20
     max_photos: int = 10
+    max_height: int = 1080
     cookies_file: Path | None = None
     proxy: str | None = None
     api_server: str | None = None
     port: int | None = None
+    self_url: str | None = None
     log_level: str = "INFO"
     ytdlp: str = "yt-dlp"
     gallerydl: str = "gallery-dl"
@@ -103,10 +105,12 @@ def load_settings() -> Settings:
         per_user_concurrent=max(1, _int("PER_USER_CONCURRENT", 1)),
         rate_limit_per_hour=max(1, _int("RATE_LIMIT_PER_HOUR", 20)),
         max_photos=min(10, max(1, _int("MAX_PHOTOS", 10))),
+        max_height=min(2160, max(144, _int("MAX_HEIGHT", 1080))),
         cookies_file=cookies_file,
         proxy=os.getenv("PROXY", "").strip() or None,
         api_server=os.getenv("API_SERVER", "").strip() or None,
         port=port,
+        self_url=os.getenv("SELF_URL", "").strip() or None,
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
         ytdlp=os.getenv("YTDLP_BIN", "yt-dlp"),
         gallerydl=os.getenv("GALLERYDL_BIN", "gallery-dl"),

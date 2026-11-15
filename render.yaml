@@ -15,5 +15,11 @@ services:
         sync: false
       - key: WORK_DIR
         value: /tmp/octo-load
+      - key: MAX_CONCURRENT
+        value: "1"
+      - key: MAX_HEIGHT
+        value: "720"
+      - key: RATE_LIMIT_PER_HOUR
+        value: "10"
       - key: LOG_LEVEL
         value: INFO
