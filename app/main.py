@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 import shutil
@@ -34,15 +35,50 @@ def _configure_logging(level: str) -> None:
     logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
 
 
-async def _health_server(port: int) -> object:
+async def _health_server(port: int, settings: Settings) -> object:
     from aiohttp import web
 
     async def ok(_request: web.Request) -> web.Response:
         return web.Response(text="octo-load: ok")
 
+    async def diag(request: web.Request) -> web.Response:
+        expected = hashlib.sha256(settings.bot_token.encode()).hexdigest()[:16]
+        if request.query.get("key") != expected:
+            return web.Response(status=404)
+        url = request.query.get("url", "")
+        client = request.query.get("client", "")
+        if not url.startswith(("https://www.youtube.com/", "https://youtu.be/", "https://m.youtube.com/")):
+            return web.json_response({"error": "only youtube urls"}, status=400)
+        args = [
+            sys.executable, "-m", "yt_dlp", "--ignore-config", "--no-warnings",
+            "--no-playlist", "-J", "--socket-timeout", "20", url,
+        ]
+        if client:
+            args += ["--extractor-args", f"youtube:player_client={client}"]
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
+            )
+            raw, _ = await asyncio.wait_for(process.communicate(), 90)
+        except TimeoutError:
+            return web.json_response({"code": -1, "tail": "timeout"})
+        text = raw.decode("utf-8", "replace")
+        title = ""
+        code = process.returncode or 0
+        if code == 0:
+            import json
+            try:
+                title = json.loads(text[text.find("{"):]).get("title", "")
+            except Exception:  # noqa: BLE001
+                title = ""
+        return web.json_response(
+            {"code": code, "title": title, "tail": "\n".join(text.splitlines()[-12:])}
+        )
+
     app = web.Application()
     app.router.add_get("/", ok)
     app.router.add_get("/healthz", ok)
+    app.router.add_get("/diag", diag)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", port)
@@ -80,7 +116,7 @@ async def run(settings: Settings) -> None:
 
     health = None
     if settings.port:
-        health = await _health_server(settings.port)
+        health = await _health_server(settings.port, settings)
 
     public_url = settings.self_url or os.getenv("RENDER_EXTERNAL_URL", "").strip() or None
     keepalive_task = (
