@@ -1,11 +1,12 @@
 # Render Blueprint — free web service with a keep-alive health endpoint.
-# Free plan sleeps after 15 minutes without traffic, so ping /healthz
-# from cron-job.org (or similar) every 10 minutes, or use a real VPS.
+# Free plan sleeps after 15 min without inbound traffic; the bot pings its own
+# RENDER_EXTERNAL_URL/healthz every 10 minutes, so no external cron is needed.
 services:
   - type: web
     name: octo-load
     runtime: docker
     plan: free
+    region: frankfurt
     healthCheckPath: /healthz
     autoDeploy: true
     envVars:
