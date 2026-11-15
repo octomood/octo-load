@@ -213,6 +213,11 @@ class Downloader:
     @staticmethod
     def _friendly_failure(lines: list[str]) -> str:
         tail = "\n".join(lines[-80:]).lower()
+        if "requested format is not available" in tail:
+            return (
+                "YouTube не отдаёт видео этому серверу: IP хостинга заблокирован. "
+                "Нужен домашний ПК или резидентный прокси (PROXY)."
+            )
         if "unsupported url" in tail:
             return "Этот сайт пока не поддерживается 😕 Попробуй другую ссылку."
         if "cancelled" in tail:
