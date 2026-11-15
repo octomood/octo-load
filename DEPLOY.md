@@ -155,7 +155,12 @@ systemctl --user status octo-load
 journalctl --user -u octo-load -f
 ```
 
-Скрипт включает `loginctl enable-linger`, поэтому бот стартует после входа в систему и живёт без открытого терминала.
+Скрипт включает `loginctl enable-linger`, поэтому бот стартует после входа в систему и живёт без открытого терминала. Он же ставит еженедельный таймер обновления экстракторов:
+
+```bash
+systemctl --user list-timers octo-load-update.timer
+systemctl --user start octo-load-update.service   # обновить прямо сейчас
+```
 
 ---
 
